@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scramble & Encrypt Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+        }
+        input[type="text"], input[type="button"], select {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+        }
+        .output {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Scramble & Encrypt Tool</h2>
+        <label for="action">Choose an action:</label>
+        <select id="action">
+            <option value="encrypt">Encrypt a message</option>
+            <option value="decrypt">Decrypt a message</option>
+        </select>
+        
+        <div id="encryptSection">
+            <label for="message">Enter the message you want to encrypt:</label>
+            <textarea id="message"></textarea>
+            <label for="scrambleMessage">Scramble the message?</label>
+            <select id="scrambleMessage">
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+            </select>
+            <label for="useCustomPins">Use custom PINs?</label>
+            <select id="useCustomPins">
+                <option value="no">No (generate random PINs)</option>
+                <option value="yes">Yes (input your own PINs)</option>
+            </select>
+            <div id="customPinsSection" style="display: none;">
+                <label for="customPin1">Enter Custom PIN 1:</label>
+                <input type="text" id="customPin1">
+                <label for="customPin2">Enter Custom PIN 2:</label>
+                <input type="text" id="customPin2">
+                <label for="customPin3">Enter Custom PIN 3:</label>
+                <input type="text" id="customPin3">
+            </div>
+            <input type="button" value="Encrypt" onclick="encryptMessage()">
+        </div>
+
+        <div id="decryptSection" style="display: none;">
+            <label for="encryptedMessage">Enter the encrypted message (comma-separated):</label>
+            <input type="text" id="encryptedMessage">
+            <label for="ivInput">Enter the IV (comma-separated):</label>
+            <input type="text" id="ivInput">
+            <label for="pinDecrypt1">Enter the first PIN:</label>
+            <input type="text" id="pinDecrypt1">
+            <label for="pinDecrypt2">Enter the second PIN:</label>
+            <input type="text" id="pinDecrypt2">
+            <label for="pinDecrypt3">Enter the third PIN:</label>
+            <input type="text" id="pinDecrypt3">
+            <input type="button" value="Decrypt" onclick="decryptMessage()">
+        </div>
+
+        <div class="output" id="output"></div>
+    </div>
+
+    <script>
+        // Function to generate a random PIN
+        function generateRandomPin(length = 50) {  // Set default length to 50
+            const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let pin = '';
+            for (let i = 0; i < length; i++) {
+                const randomIndex = Math.floor(Math.random() * charset.length);
+                pin += charset[randomIndex];
+            }
+            return pin;
+        }
+
+        // Function to generate a cryptographic key from the random PIN
+        async function generateKey(pin) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(pin);
+            return await crypto.subtle.importKey(
+                'raw', 
+                data, 
+                { name: 'PBKDF2' }, 
+                false, 
+                ['deriveKey']
+            );
+        }
+
+        // Function to derive a cryptographic key from the PIN
+        async function deriveKey(pin) {
+            const baseKey = await generateKey(pin);
+            return await crypto.subtle.deriveKey(
+                {
+                    name: 'PBKDF2',
+                    salt: new Uint8Array(16), // Use a secure random salt in production
+                    iterations: 100000,
+                    hash: 'SHA-256'
+                },
+                baseKey,
+                { name: 'AES-CBC', length: 256 },
+                true,
+                ['encrypt', 'decrypt']
+            );
+        }
+
+        // Function to scramble the message using Fisher-Yates shuffle
+        function scrambleMessage(message) {
+            const messageArray = Array.from(message); // Handle all Unicode characters
+            for (let i = messageArray.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [messageArray[i], messageArray[j]] = [messageArray[j], messageArray[i]];
+            }
+            return messageArray.join('');
+        }
+
+        // Function to encrypt the message
+        async function encryptMessage() {
+            const message = document.getElementById('message').value;
+            const scrambleOption = document.getElementById('scrambleMessage').value;
+            const useCustomPins = document.getElementById('useCustomPins').value;
+            let pin1, pin2, pin3;
+            
+            if (useCustomPins === 'yes') {
+                pin1 = document.getElementById('customPin1').value;
+                pin2 = document.getElementById('customPin2').value;
+                pin3 = document.getElementById('customPin3').value;
+            } else {
+                pin1 = generateRandomPin();  // First PIN
+                pin2 = generateRandomPin();  // Second PIN
+                pin3 = generateRandomPin();  // Third PIN
+            }
+
+            if (!pin1 || !pin2 || !pin3) {
+                document.getElementById('output').innerText = "Please enter valid PINs.";
+                return;
+            }
+
+            const key1 = await deriveKey(pin1);
+            const key2 = await deriveKey(pin2);
+            const key3 = await deriveKey(pin3);
+            const encoder = new TextEncoder();
+
+            const iv = crypto.getRandomValues(new Uint8Array(16));
+
+            // Scramble the message if the option is selected
+            const finalMessage = scrambleOption === 'yes' ? scrambleMessage(message) : message;
+
+            // First encryption with key1
+            const encryptedData1 = await crypto.subtle.encrypt(
+                {
+                    name: "AES-CBC",
+                    iv: iv
+                },
+                key1,  
+                encoder.encode(finalMessage)
+            );
+
+            // Second encryption with key2
+            const encryptedData2 = await crypto.subtle.encrypt(
+                {
+                    name: "AES-CBC",
+                    iv: iv
+                },
+                key2,  
+                new Uint8Array(encryptedData1)
+            );
+
+            // Third encryption with key3
+            const finalEncryptedData = await crypto.subtle.encrypt(
+                {
+                    name: "AES-CBC",
+                    iv: iv
+                },
+                key3,  
+                new Uint8Array(encryptedData2)
+            );
+
+            let finalOutput = `Final Message: ${finalMessage}\n` +
+                              `Encrypted Message: ${Array.from(new Uint8Array(finalEncryptedData)).join(', ')}\n` +
+                              `IV (Initialization Vector): ${Array.from(iv).join(', ')}\n` +
+                              `PINs (Save these!): ${pin1}, ${pin2}, ${pin3}`;
+
+            const outputDiv = document.getElementById('output');
+            outputDiv.innerHTML = finalOutput;
+        }
+
+        // Function to decrypt the message using three keys
+        async function decryptMessage() {
+            const encryptedMessage = document.getElementById('encryptedMessage').value.split(',').map(Number);
+            const ivInput = document.getElementById('ivInput').value.split(',').map(Number);
+            const pin1 = document.getElementById('pinDecrypt1').value;
+            const pin2 = document.getElementById('pinDecrypt2').value;
+            const pin3 = document.getElementById('pinDecrypt3').value;
+
+            try {
+                const key1 = await deriveKey(pin1);
+                const key2 = await deriveKey(pin2);
+                const key3 = await deriveKey(pin3);
+                const decoder = new TextDecoder();
+
+                const iv = new Uint8Array(ivInput); // Use the provided IV for decryption
+                
+                // First decryption with key3
+                const decryptedData3 = await crypto.subtle.decrypt(
+                    {
+                        name: "AES-CBC",
+                        iv: iv
+                    },
+                    key3,  
+                    new Uint8Array(encryptedMessage)
+                );
+
+                // Second decryption with key2
+                const decryptedData2 = await crypto.subtle.decrypt(
+                    {
+                        name: "AES-CBC",
+                        iv: iv
+                    },
+                    key2,  
+                    new Uint8Array(decryptedData3)
+                );
+
+                // Final decryption with key1
+                const decryptedData1 = await crypto.subtle.decrypt(
+                    {
+                        name: "AES-CBC",
+                        iv: iv
+                    },
+                    key1,  
+                    new Uint8Array(decryptedData2)
+                );
+
+                // Decode the decrypted message
+                let decryptedMessage = decoder.decode(decryptedData1);
+                
+                const outputDiv = document.getElementById('output');
+                outputDiv.innerText = `Decrypted Message: ${decryptedMessage}`;
+            } catch (error) {
+                document.getElementById('output').innerText = 'Decryption failed. Please check your inputs and try again.';
+            }
+        }
+
+        // Update display sections based on action selection
+        document.getElementById('action').addEventListener('change', function() {
+            const action = this.value;
+            if (action === 'encrypt') {
+                document.getElementById('encryptSection').style.display = 'block';
+                document.getElementById('decryptSection').style.display = 'none';
+            } else {
+                document.getElementById('encryptSection').style.display = 'none';
+                document.getElementById('decryptSection').style.display = 'block';
+            }
+        });
+
+        // Show custom PIN inputs if user selects to use custom PINs
+        document.getElementById('useCustomPins').addEventListener('change', function() {
+            if (this.value === 'yes') {
+                document.getElementById('customPinsSection').style.display = 'block';
+            } else {
+                document.getElementById('customPinsSection').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
